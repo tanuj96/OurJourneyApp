@@ -51,6 +51,7 @@ export default function Journey() {
   const [error, setError] = useState("");
   const [imageError, setImageError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
     // Check authentication
@@ -198,7 +199,7 @@ export default function Journey() {
             <div className="w-full max-w-4xl animate-fade-in">
               <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
                 {/* Photo */}
-                <div className="relative aspect-video w-full bg-gray-100">
+                <div className="relative aspect-video w-full bg-gray-100 cursor-pointer hover:opacity-95 transition-opacity" onClick={() => setModalOpen(true)}>
                   {!imageError ? (
                     <Image
                       src={moment.photo.webContentLink}
@@ -242,6 +243,36 @@ export default function Journey() {
                     })}
                   </p>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Image Modal */}
+          {modalOpen && moment && (
+            <div 
+              className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+              onClick={() => setModalOpen(false)}
+            >
+              <div 
+                className="relative max-w-4xl max-h-[90vh] w-full h-full flex items-center justify-center"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Image
+                  src={moment.photo.webContentLink}
+                  alt={moment.photo.name}
+                  fill
+                  className="object-contain"
+                  unoptimized
+                  priority
+                />
+                <button
+                  onClick={() => setModalOpen(false)}
+                  className="absolute top-4 right-4 text-white hover:text-gray-300 transition bg-black/50 hover:bg-black/70 p-2 rounded-full"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
             </div>
           )}
