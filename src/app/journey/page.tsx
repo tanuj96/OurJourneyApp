@@ -33,16 +33,19 @@ interface Photo {
   webContentLink: string;
   thumbnailLink?: string;
   createdTime: string;
+  fileId?: string;
+  alternativeUrls?: string[];
 }
 
 interface JourneyMoment {
   photo: Photo;
   quote: string;
+  mood: string;
 }
 
 export default function Journey() {
   const router = useRouter();
-  const [selectedMood, setSelectedMood] = useState("happy");
+  const [selectedMood, setSelectedMood] = useState("romantic");
   const [loading, setLoading] = useState(false);
   const [moment, setMoment] = useState<JourneyMoment | null>(null);
   const [error, setError] = useState("");
@@ -62,9 +65,10 @@ export default function Journey() {
     setError("");
     setImageError(false);
     setMoment(null);
+    setRetryCount(0);
     
     try {
-      const response = await fetch(`/api/working?mood=${selectedMood}`);
+      const response = await fetch(`/api/auto?mood=${selectedMood}`);
       const data = await response.json();
       
       if (!response.ok) {
@@ -72,7 +76,6 @@ export default function Journey() {
       }
       
       setMoment(data);
-      setRetryCount(0);
     } catch (err) {
       setError("Couldn't fetch a moment right now. Please try again.");
       console.error(err);
@@ -82,34 +85,34 @@ export default function Journey() {
   };
 
   const handleImageError = () => {
-    setImageError(true);
-    // Try alternate URL if available
-    if (moment && retryCount < 2) {
-      setRetryCount(retryCount + 1);
-      
-      // Try different Google Drive URL formats
-      const fileId = moment.photo.webContentLink.match(/id=([^&]+)/)?.[1] || 
-                     moment.photo.id;
-      
-      if (fileId) {
-        const altUrls = [
-          `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`,
-          `https://drive.google.com/uc?export=download&id=${fileId}`,
-          `https://lh3.googleusercontent.com/d/${fileId}=w1000`,
-        ];
-        
-        // Try next URL format
-        if (retryCount < altUrls.length) {
-          setMoment({
-            ...moment,
-            photo: {
-              ...moment.photo,
-              webContentLink: altUrls[retryCount]
-            }
-          });
-          setImageError(false);
+    if (moment && moment.photo.alternativeUrls && retryCount < moment.photo.alternativeUrls.length) {
+      // Try next alternative URL
+      setMoment({
+        ...moment,
+        photo: {
+          ...moment.photo,
+          webContentLink: moment.photo.alternativeUrls[retryCount]
         }
-      }
+      });
+      setRetryCount(retryCount + 1);
+      setImageError(false);
+    } else {
+      setImageError(true);
+    }
+  };
+
+  const handleRetryImage = () => {
+    setImageError(false);
+    setRetryCount(0);
+    if (moment && moment.photo.fileId) {
+      // Reset to first URL format
+      setMoment({
+        ...moment,
+        photo: {
+          ...moment.photo,
+          webContentLink: `https://drive.google.com/thumbnail?id=${moment.photo.fileId}&sz=w1000`
+        }
+      });
     }
   };
 
@@ -211,10 +214,7 @@ export default function Journey() {
                       <ImageOff className="w-16 h-16 text-pink-300 mb-2" />
                       <p className="text-gray-400 text-sm">This memory is loading differently</p>
                       <button
-                        onClick={() => {
-                          setImageError(false);
-                          handleImageError();
-                        }}
+                        onClick={handleRetryImage}
                         className="mt-2 text-xs text-pink-500 hover:text-pink-600 underline"
                       >
                         Try again
