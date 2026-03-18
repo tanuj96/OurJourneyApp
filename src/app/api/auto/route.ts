@@ -2,11 +2,26 @@ import { NextRequest, NextResponse } from 'next/server';
 import { google } from 'googleapis';
 import OpenAI from 'openai';
 
-// Helper to parse private key (handle newline escaping)
+// Helper to parse private key (handle both escaped and literal newlines)
 function parsePrivateKey(key?: string): string | undefined {
   if (!key) return undefined;
+  // Handle both formats:
+  // 1. Escaped newlines: "-----BEGIN...\\n...\\n-----END..."
+  // 2. Literal newlines: multiline string format
+  let result = key;
+  
+  // If it starts with quotes, remove them
+  if (result.startsWith('"') && result.endsWith('"')) {
+    result = result.slice(1, -1);
+  }
+  
   // Replace escaped newlines with actual newlines
-  return key.replace(/\\n/g, '\n');
+  result = result.replace(/\\n/g, '\n');
+  
+  // Ensure it starts and ends properly
+  result = result.trim();
+  
+  return result;
 }
 
 // Initialize Google Drive
