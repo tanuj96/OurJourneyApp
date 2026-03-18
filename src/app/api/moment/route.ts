@@ -29,44 +29,158 @@ const moodPrompts: Record<string, string> = {
   grateful: "Generate a short, heartfelt love quote about gratitude and appreciation.",
 };
 
-async function getRandomPhoto() {
+// Cache for photos with mood analysis
+const photosCache: Map<string, any[]> = new Map();
+const CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
+
+async function getPhotosFromDrive() {
   try {
-    console.log('Fetching photos from Google Drive...');
-    console.log('Folder ID:', process.env.GOOGLE_DRIVE_FOLDER_ID);
+    console.log('Fetching photos from Google Drive folder:', process.env.GOOGLE_DRIVE_FOLDER_ID);
     
-    // Get all photos from the shared folder
     const response = await drive.files.list({
       q: `'${process.env.GOOGLE_DRIVE_FOLDER_ID}' in parents and mimeType contains 'image/'`,
       fields: 'files(id, name, webContentLink, thumbnailLink, createdTime)',
       orderBy: 'createdTime desc',
-      pageSize: 50,
+      pageSize: 100,
     });
 
-    const files = response.data.files || [];
-    console.log(`Found ${files.length} photos`);
+    let files = response.data.files || [];
+    console.log(`Found ${files.length} photos in Google Drive`);
     
     if (files.length === 0) {
-      throw new Error('No photos found in the folder');
+      throw new Error('No photos found in the Google Drive folder');
     }
 
-    // Return a random photo
-    const randomIndex = Math.floor(Math.random() * files.length);
-    const photo = files[randomIndex];
-    
-    // Fix Google Drive URL
-    return {
-      ...photo,
-      webContentLink: `https://drive.google.com/uc?export=view&id=${photo.id}`,
-    };
+    // Fix Google Drive URLs and ensure all fields are strings
+    files = files.map((file: any) => ({
+      id: file.id || '',
+      name: (file.name || 'Photo') as string,
+      webContentLink: `https://drive.google.com/uc?export=view&id=${file.id}`,
+      thumbnailLink: file.thumbnailLink || '',
+      createdTime: file.createdTime || new Date().toISOString(),
+    }));
+
+    return files;
   } catch (error) {
     console.error('Error fetching from Google Drive:', error);
     throw error;
   }
 }
 
+async function detectPhotoMood(photoUrl: string, photoName: string): Promise<string> {
+  try {
+    console.log(`Analyzing photo mood for: ${photoName}`);
+    
+    const analysisPrompt = `
+You are an expert in analyzing images and emotions. Look at this image and identify its mood/vibe.
+The photo is from a couple's journey/memories album.
+
+Based on the visual elements (colors, composition, subject, atmosphere), determine which of these moods best matches:
+- happy: bright, cheerful, celebratory
+- romantic: intimate, passionate, loving
+- cozy: warm, comfortable, homey
+- adventurous: exciting, outdoor, exploring
+- funny: playful, humorous, lighthearted
+- nostalgic: vintage, memories, sentimental
+- dreamy: magical, ethereal, dreamy
+- grateful: peaceful, appreciative, content
+
+Respond with ONLY the mood name from the list above. For example: "romantic" or "adventurous"
+Do not explain, just return the mood name.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4-vision-preview",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image_url",
+              image_url: {
+                url: photoUrl,
+              },
+            },
+            {
+              type: "text",
+              text: analysisPrompt,
+            },
+          ],
+        },
+      ],
+      max_tokens: 10,
+      temperature: 0.3,
+    });
+
+    const detectedMood = completion.choices[0].message.content?.toLowerCase().trim() || 'romantic';
+    console.log(`Detected mood for ${photoName}: ${detectedMood}`);
+    
+    return detectedMood;
+  } catch (error) {
+    console.error('Error analyzing photo mood:', error);
+    // Fallback to random mood if analysis fails
+    const moods = ['happy', 'romantic', 'cozy', 'adventurous', 'funny', 'nostalgic', 'dreamy', 'grateful'];
+    return moods[Math.floor(Math.random() * moods.length)];
+  }
+}
+
+async function getPhotosByMood(requestedMood: string) {
+  try {
+    const cacheKey = 'allPhotosWithMoods';
+    const now = Date.now();
+    
+    // Check cache
+    if (photosCache.has(cacheKey)) {
+      const cachedData = photosCache.get(cacheKey);
+      if (cachedData && now - (cachedData[0]?.timestamp || 0) < CACHE_DURATION) {
+        console.log('Using cached photos');
+        const matchingPhotos = cachedData.filter(p => p.mood === requestedMood);
+        if (matchingPhotos.length > 0) {
+          return matchingPhotos;
+        }
+      }
+    }
+
+    // Fetch all photos from Google Drive
+    const allPhotos = await getPhotosFromDrive();
+    const photosWithMoods = [];
+
+    // Analyze each photo's mood
+    console.log(`Analyzing mood for ${allPhotos.length} photos...`);
+    for (const photo of allPhotos) {
+      try {
+        const photoUrl = (photo.webContentLink as string) || '';
+        const photoName = (photo.name as string) || 'unknown';
+        const mood = await detectPhotoMood(photoUrl, photoName);
+        photosWithMoods.push({
+          ...photo,
+          mood: mood as string,
+          timestamp: now,
+        });
+
+        // Add small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (err) {
+        console.error(`Failed to analyze mood for ${photo.name}:`, err);
+      }
+    }
+
+    // Cache the results
+    photosCache.set(cacheKey, photosWithMoods);
+
+    // Filter by requested mood
+    const matchingPhotos = photosWithMoods.filter(p => p.mood === requestedMood);
+    console.log(`Found ${matchingPhotos.length} photos matching mood: ${requestedMood}`);
+    
+    return matchingPhotos.length > 0 ? matchingPhotos : photosWithMoods; // Fallback to all if no matches
+  } catch (error) {
+    console.error('Error filtering photos by mood:', error);
+    throw error;
+  }
+}
+
 async function generateQuote(mood: string, photoName: string) {
   try {
-    console.log('Generating quote with OpenAI...');
+    console.log(`Generating quote for mood: ${mood}`);
     const prompt = moodPrompts[mood] || moodPrompts.romantic;
     
     const completion = await openai.chat.completions.create({
@@ -88,7 +202,6 @@ async function generateQuote(mood: string, photoName: string) {
     return completion.choices[0].message.content || "Every moment with you is a beautiful memory.";
   } catch (error) {
     console.error('Error generating quote:', error);
-    // Fallback quotes if AI fails
     const fallbackQuotes = [
       "Every moment with you is my favorite moment.",
       "You're the best thing that's ever happened to me.",
@@ -132,32 +245,38 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get random photo
-    console.log('Fetching random photo...');
-    const photo = await getRandomPhoto();
-    console.log('Photo fetched:', photo?.name);
+    // Get photos matching the requested mood
+    console.log(`Fetching photos with mood: ${mood}...`);
+    const matchingPhotos = await getPhotosByMood(mood);
     
-    if (!photo) {
+    if (!matchingPhotos || matchingPhotos.length === 0) {
       return NextResponse.json(
-        { error: 'No photos found in your journey folder' },
+        { error: `No photos found matching the "${mood}" mood. Please try another mood.` },
         { status: 404 }
       );
     }
 
+    // Select a random photo from matching ones
+    const randomIndex = Math.floor(Math.random() * matchingPhotos.length);
+    const selectedPhoto = matchingPhotos[randomIndex];
+    
+    console.log(`Selected photo: ${selectedPhoto.name} (detected mood: ${selectedPhoto.mood})`);
+    
     // Generate quote based on mood and photo
     console.log('Generating quote...');
-    const quote = await generateQuote(mood, photo.name || 'our moment');
+    const quote = await generateQuote(mood, selectedPhoto.name || 'our moment');
     console.log('Quote generated:', quote);
 
     return NextResponse.json({
       photo: {
-        id: photo.id,
-        name: photo.name,
-        webContentLink: photo.webContentLink,
-        thumbnailLink: photo.thumbnailLink,
-        createdTime: photo.createdTime,
+        id: selectedPhoto.id,
+        name: selectedPhoto.name,
+        webContentLink: selectedPhoto.webContentLink,
+        thumbnailLink: selectedPhoto.thumbnailLink,
+        createdTime: selectedPhoto.createdTime,
       },
       quote: quote,
+      detectedMood: selectedPhoto.mood,
     });
   } catch (error) {
     console.error('API Route Error:', error);
